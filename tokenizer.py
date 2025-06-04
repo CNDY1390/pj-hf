@@ -55,45 +55,42 @@ def clean_vocab(vocab: Dict[str, int], merges: List[Tuple[str, str]]):
         merges (:obj:`List[Tuple[str, str]]`):
             A list of pairs of tokens (:obj:`Tuple[str, str]`), e.g. `[("a", "b"),...]`
     """
-    """YOUR CODE HERE"""
-    # Remove vocabulary entries that are multi-digit or combinations of digits not in the form 'Ġ' + single digit
-    def contain_digit(token):
-        return any(char_in_token in string.digits for char_in_token in token)
+    def is_multi_digit_subtoken(token_str: str) -> bool:
+        """
+        Checks if a token string, after stripping a potential leading 'Ġ' or '臓',
+        consists solely of multiple digits.
+        """
+        effective_token = token_str
+        if token_str.startswith('Ġ') or token_str.startswith('臓'):
+            effective_token = token_str[1:]
+        
+        # Check if the effective token is all digits and has more than 1 digit
+        return effective_token.isdigit() and len(effective_token) > 1
 
-    keys_to_remove = []
-    for token in vocab.keys():
-        if contain_digit(token):
-            if not(len(token) == 1 or len(token) == 2 and token.startswith('Ġ')):
-                keys_to_remove.append(token)
-            if token.count('Ġ') > 1:
-                keys_to_remove.append(token)
+    # Remove multi-digit tokens from vocab while preserving index order
+    tokens_to_remove = [token for token in vocab if is_multi_digit_subtoken(token)]
+    for token in tokens_to_remove:
+        del vocab[token]
+    
+    # Reindex vocabulary to maintain sequential indices
+    sorted_items = sorted(vocab.items(), key=lambda x: x[1])
+    vocab.clear()
+    for i, (token, _) in enumerate(sorted_items):
+        vocab[token] = i
 
-    for key in keys_to_remove:
-        del vocab[key]
-
-    for i in range(len(vocab)):
-        vocab[list(vocab.keys())[i]] = i
-
-    # Remove merges that would combine digits or create multi-digit tokens
-    i = 0
-    while i < len(merges):
-        merge = merges[i]
-        has_digit_0 = any(c.isdigit() for c in merge[0])
-        has_digit_1 = any(c.isdigit() for c in merge[1])
-        if has_digit_0 and has_digit_1:
-            merges.pop(i)
-        elif has_digit_0 and merge[1].startswith('Ġ'):
-            if len(merge[0]) > 1 :
-                merges.pop(i)
-            else: 
-                i += 1
-        elif has_digit_1 and merge[0].startswith('Ġ'):
-            if len(merge[1]) > 1:
-                merges.pop(i)
-            else:
-                i += 1
-        else:
-            i += 1
+    # Remove merge rules that would create multi-digit tokens
+    # Keep merges where both components exist in vocab and result doesn't create multi-digit
+    valid_merges = []
+    for m1, m2 in merges:
+        merged_token = m1 + m2
+        # Keep the merge if:
+        # 1. Both components still exist in vocab
+        # 2. The result doesn't create a multi-digit token
+        if m1 in vocab and m2 in vocab and not is_multi_digit_subtoken(merged_token):
+            valid_merges.append((m1, m2))
+    
+    # Update merges in-place
+    merges[:] = valid_merges
 
 
 if __name__ == '__main__':
