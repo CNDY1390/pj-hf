@@ -63,15 +63,16 @@ class TreeValidator:
         
         # 括号平衡检查
         TreeValidator._check_bracket_balance(actions)
-        
-        # 树结构检查
+          # 树结构检查
         TreeValidator._check_tree_structure(actions)
-      @staticmethod
+    
+    @staticmethod
     def _check_basic_requirements(actions: List[str]) -> None:
         """检查序列的基本要求"""
         if not actions or len(actions) < 2: raise InvalidTreeError("序列太短")
         if actions[0] != "<s>" or actions[-1] != "</s>": raise InvalidTreeError("序列必须以<s>开始并以</s>结束")
-      @staticmethod
+    
+    @staticmethod
     def _check_bracket_balance(actions: List[str]) -> None:
         """检查括号是否平衡匹配"""
         balance = 0
@@ -84,7 +85,8 @@ class TreeValidator:
             if balance < 0: raise InvalidTreeError(f"在开括号前关闭非终结符: {token}，位置 {idx}")
                 
         if balance != 0: raise InvalidTreeError(f"序列末尾存在不匹配的非终结符。平衡值: {balance}")
-      @staticmethod
+    
+    @staticmethod
     def _check_tree_structure(actions: List[str]) -> None:
         """检查树结构的有效性，包括内容检查"""
         stack = []; has_terminal = False
@@ -120,7 +122,7 @@ class TreeValidator:
 
 class SequenceProcessor:
     """序列处理器，负责处理输入、输出和位置ID"""
-      @staticmethod
+    @staticmethod
     def process_sequence(actions: List[str]) -> Tuple[List[str], List[str], List[int]]:
         """
         处理动作序列，生成输入、输出和位置ID
@@ -156,7 +158,7 @@ class SequenceProcessor:
 
 class AttentionMaskGenerator:
     """注意力掩码生成器，负责生成STACK/COMPOSE注意力掩码"""
-      @staticmethod
+    @staticmethod
     def get_token_types(inputs: List[str], labels: List[str]) -> List[TokenType]:
         """
         确定每个输入标记的类型
@@ -180,7 +182,7 @@ class AttentionMaskGenerator:
             )
                 
         return token_types
-      @staticmethod
+    @staticmethod
     def generate_attention_mask(inputs: List[str], labels: List[str]) -> torch.Tensor:
         """
         生成注意力掩码
