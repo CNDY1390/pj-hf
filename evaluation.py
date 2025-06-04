@@ -30,13 +30,10 @@ def get_macro_f1_metric() -> Callable[[], float]:
         >>> golds = [0, 1, 2, 0, 1, 2]
         >>> func(preds, golds)
         0.43333333333333335
-    """
+    """    
 
     """YOUR CODE HERE"""
-    metric = evaluate.load("f1")
-    def func(preds, golds):
-        return metric.compute(predictions=preds, references=golds, average="macro")["f1"]
-    return func
+    return lambda preds, golds: evaluate.load("f1").compute(predictions=preds, references=golds, average="macro")["f1"]
 
 
 def main():
