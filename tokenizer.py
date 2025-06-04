@@ -55,6 +55,8 @@ def clean_vocab(vocab: Dict[str, int], merges: List[Tuple[str, str]]):
         merges (:obj:`List[Tuple[str, str]]`):
             A list of pairs of tokens (:obj:`Tuple[str, str]`), e.g. `[("a", "b"),...]`
     """
+    
+    """YOUR CODE HERE"""
     def is_multi_digit_subtoken(token_str: str) -> bool:
         """
         Checks if a token string, after stripping a potential leading 'Ġ' or '臓',
