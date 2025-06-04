@@ -63,7 +63,7 @@ def clean_vocab(vocab: Dict[str, int], merges: List[Tuple[str, str]]):
         consists solely of multiple digits.
         """
         effective_token = token_str
-        if token_str.startswith('Ġ') or token_str.startswith('臓'):
+        if token_str.startswith('Ġ'):
             effective_token = token_str[1:]
         
         # Check if the effective token is all digits and has more than 1 digit
