@@ -33,7 +33,10 @@ def get_macro_f1_metric() -> Callable[[], float]:
     """
 
     """YOUR CODE HERE"""
-    util.raiseNotDefined()
+    metric = evaluate.load("f1")
+    def func(preds, golds):
+        return metric.compute(predictions=preds, references=golds, average="macro")["f1"]
+    return func
 
 
 def main():

@@ -37,9 +37,54 @@ def get_topic_classification_pipeline() -> Callable[[str], dict]:
         >>> result = func("Would the US constitution be changed if the admendment received 2/3 of the popular vote?")
         {"label": "Politics & Government", "score": 0.9999999403953552}
     """
-    pipe = pipeline(model="cointegrated/rubert-tiny-sentiment-balanced")
+    # 题目要求的10个标签
+    target_labels = [
+        'Society & Culture', 'Science & Mathematics', 'Health',
+        'Education & Reference', 'Computers & Internet', 'Sports', 'Business & Finance',
+        'Entertainment & Music', 'Family & Relationships', 'Politics & Government'
+    ]
+    
+    # 映射从Yahoo Answers Topics的数字类别到目标标签
+    # 根据数据集信息映射
+    # 0: Society & Culture
+    # 1: Science & Mathematics
+    # 2: Health
+    # 3: Education & Reference
+    # 4: Computers & Internet
+    # 5: Sports
+    # 6: Business & Finance
+    # 7: Entertainment & Music
+    # 8: Family & Relationships
+    # 9: Politics & Government
+    label_map = {
+        0: 'Society & Culture',
+        1: 'Science & Mathematics', 
+        2: 'Health',
+        3: 'Education & Reference', 
+        4: 'Computers & Internet', 
+        5: 'Sports', 
+        6: 'Business & Finance',
+        7: 'Entertainment & Music', 
+        8: 'Family & Relationships', 
+        9: 'Politics & Government'
+    }
+    
+    # 使用预训练模型，选择一个针对Yahoo Answers Topics数据集微调过的模型
+    pipe = pipeline("text-classification", model="fabriceyhc/bert-base-uncased-yahoo_answers_topics", top_k=None)
+    
     def func(text: str) -> dict:
-        return pipe(text)[0]
+        # 使用模型进行预测
+        results = pipe(text)
+        
+        # 获取预测的类别ID和分数
+        pred_id = int(results[0]["label"].split('_')[-1])  # 从LABEL_X中提取X
+        score = results[0]["score"]
+        
+        # 映射到目标标签
+        label = label_map[pred_id]
+        
+        return {"label": label, "score": score}
+    
     return func
 
 

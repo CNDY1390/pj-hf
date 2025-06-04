@@ -17,6 +17,7 @@ from tokenizers import Tokenizer
 import tokenizers.models
 import tokenizers.pre_tokenizers
 import tokenizers.decoders
+import string
 
 
 def get_gpt2_tokenizer() -> Tokenizer:
@@ -54,9 +55,45 @@ def clean_vocab(vocab: Dict[str, int], merges: List[Tuple[str, str]]):
         merges (:obj:`List[Tuple[str, str]]`):
             A list of pairs of tokens (:obj:`Tuple[str, str]`), e.g. `[("a", "b"),...]`
     """
-
     """YOUR CODE HERE"""
-    util.raiseNotDefined()
+    # Remove vocabulary entries that are multi-digit or combinations of digits not in the form 'Ġ' + single digit
+    def contain_digit(token):
+        return any(char_in_token in string.digits for char_in_token in token)
+
+    keys_to_remove = []
+    for token in vocab.keys():
+        if contain_digit(token):
+            if not(len(token) == 1 or len(token) == 2 and token.startswith('Ġ')):
+                keys_to_remove.append(token)
+            if token.count('Ġ') > 1:
+                keys_to_remove.append(token)
+
+    for key in keys_to_remove:
+        del vocab[key]
+
+    for i in range(len(vocab)):
+        vocab[list(vocab.keys())[i]] = i
+
+    # Remove merges that would combine digits or create multi-digit tokens
+    i = 0
+    while i < len(merges):
+        merge = merges[i]
+        has_digit_0 = any(c.isdigit() for c in merge[0])
+        has_digit_1 = any(c.isdigit() for c in merge[1])
+        if has_digit_0 and has_digit_1:
+            merges.pop(i)
+        elif has_digit_0 and merge[1].startswith('Ġ'):
+            if len(merge[0]) > 1 :
+                merges.pop(i)
+            else: 
+                i += 1
+        elif has_digit_1 and merge[0].startswith('Ġ'):
+            if len(merge[1]) > 1:
+                merges.pop(i)
+            else:
+                i += 1
+        else:
+            i += 1
 
 
 if __name__ == '__main__':

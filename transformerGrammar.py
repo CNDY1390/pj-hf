@@ -26,48 +26,280 @@ from tokenizers.processors import TemplateProcessing
 
 from transformers import PreTrainedTokenizerFast, Trainer, TrainingArguments, PreTrainedModel
 from transformers.models.gpt_neo import GPTNeoConfig, GPTNeoForCausalLM
+from enum import Enum
+from typing import List, Dict, Tuple, Any, Optional, Union
 
 
 class InvalidTreeError(Exception):
     pass
 
 
+class TokenType(Enum):
+    """枚举类型定义不同的标记类型"""
+    BOS = "BOS"       # 序列开始标记 <s>
+    EOS = "EOS"       # 序列结束标记 </s>
+    ONT = "ONT"       # 开括号非终结符 (X
+    CNT1 = "CNT1"     # 闭括号非终结符类型1 X)
+    CNT2 = "CNT2"     # 闭括号非终结符类型2 X) (复制的)
+    TERM = "TERM"     # 终端符号
+
+
+class TreeValidator:
+    """语法树验证器，负责检查动作序列是否构成有效的语法树"""
+    
+    @staticmethod
+    def validate(actions: List[str]) -> None:
+        """
+        验证动作序列是否构成有效的语法树
+        
+        Args:
+            actions: 动作序列
+            
+        Raises:
+            InvalidTreeError: 如果序列无效
+        """
+        # 基本检查
+        TreeValidator._check_basic_requirements(actions)
+        
+        # 括号平衡检查
+        TreeValidator._check_bracket_balance(actions)
+        
+        # 树结构检查
+        TreeValidator._check_tree_structure(actions)
+    
+    @staticmethod
+    def _check_basic_requirements(actions: List[str]) -> None:
+        """检查序列的基本要求"""
+        if not actions or len(actions) < 2:
+            raise InvalidTreeError("序列太短")
+            
+        if actions[0] != "<s>" or actions[-1] != "</s>":
+            raise InvalidTreeError("序列必须以<s>开始并以</s>结束")
+    
+    @staticmethod
+    def _check_bracket_balance(actions: List[str]) -> None:
+        """检查括号是否平衡匹配"""
+        balance = 0
+        
+        for idx, token in enumerate(actions):
+            if idx == 0 and token == "<s>":
+                continue
+            if idx == len(actions) - 1 and token == "</s>":
+                continue
+                
+            if token.startswith("("):
+                balance += 1
+            elif token.endswith(")"):
+                balance -= 1
+                
+            if balance < 0:
+                raise InvalidTreeError(f"在开括号前关闭非终结符: {token}，位置 {idx}")
+                
+        if balance != 0:
+            raise InvalidTreeError(f"序列末尾存在不匹配的非终结符。平衡值: {balance}")
+    
+    @staticmethod
+    def _check_tree_structure(actions: List[str]) -> None:
+        """检查树结构的有效性，包括内容检查"""
+        stack = []
+        has_terminal = False
+        
+        for idx, token in enumerate(actions):
+            if token in ["<s>", "</s>"]:
+                continue
+                
+            if token.startswith("("):
+                # [非终结符名称, 是否有内容]
+                stack.append([token[1:], False])
+            elif token.endswith(")"):
+                if not stack:
+                    raise InvalidTreeError(f"关闭非终结符 '{token}' 没有匹配的开括号")
+                    
+                nt_name, has_content = stack.pop()
+                
+                if nt_name != token[:-1]:
+                    raise InvalidTreeError(f"非终结符不匹配: 预期 '{nt_name})', 得到 '{token}'")
+                    
+                if not has_content:
+                    raise InvalidTreeError(f"非终结符 '{nt_name}' 为空或只包含空非终结符")
+                    
+                # 标记父级有内容
+                if stack:
+                    stack[-1][1] = True
+            else:  # 终端符号
+                has_terminal = True
+                if not stack:
+                    raise InvalidTreeError(f"在任何非终结符之外找到终端 '{token}'")
+                    
+                # 标记当前非终结符及其所有祖先有内容
+                stack[-1][1] = True
+                for i in range(len(stack) - 1):
+                    stack[i][1] = True
+        
+        # 检查是否有终端符号
+        if not has_terminal and len(actions) > 2:
+            is_just_bos_eos = len(actions) == 2 and actions[0] == "<s>" and actions[1] == "</s>"
+            if not is_just_bos_eos:
+                raise InvalidTreeError("动作序列中没有找到终端符号")
+
+
+class SequenceProcessor:
+    """序列处理器，负责处理输入、输出和位置ID"""
+    
+    @staticmethod
+    def process_sequence(actions: List[str]) -> Tuple[List[str], List[str], List[int]]:
+        """
+        处理动作序列，生成输入、输出和位置ID
+        
+        Args:
+            actions: 动作序列
+            
+        Returns:
+            inputs: 处理后的输入序列
+            labels: 处理后的输出序列
+            position_ids: 位置ID序列
+        """
+        inputs = []
+        labels = []
+        position_ids = []
+        depth = 0
+        
+        for token in actions:
+            if token == "<s>":
+                inputs.append(token)
+                labels.append(token)
+                position_ids.append(0)
+                depth = 0
+            elif token.startswith("("):
+                inputs.append(token)
+                labels.append(token)
+                position_ids.append(depth)
+                depth += 1
+            elif token.endswith(")"):
+                depth -= 1
+                # 原始闭括号
+                inputs.append(token)
+                labels.append(token)
+                position_ids.append(depth)
+                # 复制的闭括号
+                inputs.append(token)
+                labels.append("<pad>")
+                position_ids.append(depth)
+            elif token == "</s>":
+                inputs.append(token)
+                labels.append(token)
+                position_ids.append(0)
+            else:  # 终端符号
+                inputs.append(token)
+                labels.append(token)
+                position_ids.append(depth)
+                
+        return inputs, labels, position_ids
+
+
+class AttentionMaskGenerator:
+    """注意力掩码生成器，负责生成STACK/COMPOSE注意力掩码"""
+    
+    @staticmethod
+    def get_token_types(inputs: List[str], labels: List[str]) -> List[TokenType]:
+        """
+        确定每个输入标记的类型
+        
+        Args:
+            inputs: 输入序列
+            labels: 标签序列
+            
+        Returns:
+            token_types: 标记类型列表
+        """
+        token_types = []
+        
+        for token, label in zip(inputs, labels):
+            if token == "<s>":
+                token_types.append(TokenType.BOS)
+            elif token == "</s>":
+                token_types.append(TokenType.EOS)
+            elif token.startswith("("):
+                token_types.append(TokenType.ONT)
+            elif token.endswith(")"):
+                if label != "<pad>":
+                    token_types.append(TokenType.CNT1)
+                else:
+                    token_types.append(TokenType.CNT2)
+            else:
+                token_types.append(TokenType.TERM)
+                
+        return token_types
+    
+    @staticmethod
+    def generate_attention_mask(inputs: List[str], labels: List[str]) -> torch.Tensor:
+        """
+        生成注意力掩码
+        
+        Args:
+            inputs: 输入序列
+            labels: 标签序列
+            
+        Returns:
+            attention_mask: 注意力掩码张量
+        """
+        token_types = AttentionMaskGenerator.get_token_types(inputs, labels)
+        seq_len = len(inputs)
+        attention_mask = torch.zeros(seq_len, seq_len, dtype=torch.float)
+        stack = []
+        
+        for i in range(seq_len):
+            current_type = token_types[i]
+            
+            if current_type == TokenType.EOS:
+                continue
+                
+            if current_type == TokenType.CNT1:
+                # COMPOSE注意力模式
+                j = i
+                while j < seq_len and token_types[j] != TokenType.ONT:
+                    attention_mask[i, j] = 1.0
+                    j = stack.pop()
+                attention_mask[i, j] = 1.0
+                stack.append(i)
+            else:
+                # STACK注意力模式
+                if current_type != TokenType.CNT2:
+                    stack.append(i)
+                for attended_idx in stack:
+                    attention_mask[i, attended_idx] = 1.0
+                attention_mask[i, i] = 1.0
+                
+        return attention_mask
+
+
 def mapping_function(example: dict) -> dict:
     """
-    Question:
-        Your task is to return the processed input, processed output, attention mask, and absolute positions of the action sequence for valid actions sequence. The following order may be your implementation order:
-
-            1. Check whether the given action sequence is a valid sequence to generate a legal parse tree. If it is invalid, please raise an InvalidTreeError Exception.
-            2. The processed input: a list of strings. It should duplicate all closing nonterminals in the given action sequence.
-            3. The processed output: a list of strings. It should insert '<pad>' after all closing nonterminals in the given action sequence.
-            4. The absolute positions: a list of integers. The absolute position of each token is defined as the depth of it in the tree.
-            5. The attention mask: a 2d torch tensor. This is the attention mask with STACK/COMPOSE attention. The attention mask of '</s>' is all 0s.
-
-        HINT: It is guaranteed that the first item of input is '<s>' (beginning of sequence), and the last item of input is '</s>' (end of sequence). The absolute positions of both '<s>' and '</s>' are 0 in this question.
+    处理动作序列，生成用于Transformer Grammar模型的输入
     
     Args:
-        example (dict): The example to process. It has the following fields:
-            - actions (List[str]): The action sequence. It is a list of strings which can be regarded as an action sequence for generative transition-based parsing.
-
-    Return:
-        mapped (dict): The mapped example. It has the following fields:
-            - inputs (List[str]): The processed input. A list of tokens for the input.
-            - labels (List[str]): The processed output. A list of tokens for the expected output.
-            - position_ids (List[int]): The absolute positions. A list of integers representing the absolute position of each token in the input.
-            - attention_mask (torch.Tensor): The attention mask. Shape: (len(input), len(input)). A 2D tensor representing the attention mask for the input sequence. 1 for valid tokens, 0 for padding tokens.
-
-    Example:
-        >>> mapping_function({"actions": ["<s>", "(S", "(NP", "the", "blue", "bird", "NP)", "(VP", "sings", "VP)", "S)", "</s>"]})
-        {
-            'inputs': ['<s>', '(S', '(NP', 'the', 'blue', 'bird', 'NP)', 'NP)', '(VP', 'sings', 'VP)', 'VP)', 'S)', 'S)', '</s>'],
-            'labels': ['<s>', '(S', '(NP', 'the', 'blue', 'bird', 'NP)', '<pad>', '(VP', 'sings', 'VP)', '<pad>', 'S)', '<pad>', '</s>'],
-            'position_ids': [0, 0, 1, 2, 2, 2, 1, 1, 1, 2, 1, 1, 0, 0, 0],
-            'attention_mask': tensor([[...]])
-        }
+        example: 包含动作序列的示例
+        
+    Returns:
+        处理后的示例，包含inputs、labels、position_ids和attention_mask
     """
-
-    """YOUR CODE HERE"""
-    util.raiseNotDefined()
+    actions = example["actions"]
+    
+    # 1. 验证动作序列
+    TreeValidator.validate(actions)
+    
+    # 2-4. 处理序列，生成输入、输出和位置ID
+    inputs, labels, position_ids = SequenceProcessor.process_sequence(actions)
+    
+    # 5. 生成注意力掩码
+    attention_mask = AttentionMaskGenerator.generate_attention_mask(inputs, labels)
+    
+    return {
+        "inputs": inputs,
+        "labels": labels,
+        "position_ids": position_ids,
+        "attention_mask": attention_mask,
+    }
 
 
 def get_trainer(
@@ -76,30 +308,20 @@ def get_trainer(
     train_dataset: Dataset
 ) -> Trainer:
     """
-    Question:
-        Create a Trainer object for the model. The Trainer is used to train the model on the dataset.
-        Select the appropriate training arguments for the Trainer. For example, setting the proper learning rate,
-        batch size, optimizer, learning rate scheduler, number of epochs, etc. would be a good idea.
-
+    创建用于训练模型的Trainer对象
+    
     Args:
-        tokenizer (PreTrainedTokenizerFast): The tokenizer to use for the model.
-        model (PreTrainedModel): The model to train.
-        train_dataset (Dataset): The dataset to train on.
-
+        tokenizer: 分词器
+        model: 预训练模型
+        train_dataset: 训练数据集
+        
     Returns:
-        trainer (Trainer): The Trainer object for the model.
-
-    Example:
-        >>> trainer = get_trainer(tokenizer, model, train_dataset)
-        >>> trainer.train()
-        >>> trainer.evaluate(train_dataset)
-        {'eval_loss': 2.1234, ...}
+        trainer: Trainer对象
     """
 
     def data_collator(features):
         """
-        Data collator is to aggregate the features into a batch. You'll find it helpful when creating the Trainer.
-        We simply pad the sequences but deal with attention mask seperately.
+        数据整理器，将特征聚合成批次
         """
         max_length = max([len(f["input_ids"]) for f in features])
         batch = {
@@ -132,45 +354,68 @@ def get_trainer(
 
         return batch
 
-    """YOUR CODE HERE"""
-    util.raiseNotDefined()
+    # 训练参数配置
+    training_args = TrainingArguments(
+        output_dir="./results",
+        evaluation_strategy="epoch",
+        learning_rate=2e-4,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
+        num_train_epochs=5,
+        weight_decay=0.01,
+        logging_steps=10,
+        save_strategy="no",
+        report_to=[],
+    )
+    
+    # 创建Trainer
+    return Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=None,
+        data_collator=data_collator,
+        tokenizer=tokenizer,
+    )
 
 
 def main():
-    """This function trains a Transformer Grammar model based on GPT2 for the task of generative transition-based parsing."""
+    """训练基于GPT2的Transformer Grammar模型，用于生成式转换解析"""
  
-    ## Load the dataset from disk
+    ## 从磁盘加载数据集
     dataset = load_dataset("text", data_files="data/corpus.cc", split="train")
 
 
-    ## Build the word tokenizer
-    # Initialize tokenizer with special tokens
+    ## 构建词级分词器
+    # 使用特殊标记初始化分词器
     tokenizer = Tokenizer(WordLevel(unk_token="<unk>"))
 
-    # Use the whitespace pre-tokenizer to split on whitespace
+    # 使用空格预分词器
     tokenizer.pre_tokenizer = WhitespaceSplit()
 
-    # Build the vocabulary using WordLevelTrainer
+    # 使用WordLevelTrainer构建词汇表
     trainer = WordLevelTrainer(special_tokens=["<unk>", "<s>", "</s>", "<pad>"])
     tokenizer.train_from_iterator(dataset["text"], trainer=trainer)
 
-    # Set the post-processor to add special tokens
+    # 设置后处理器以添加特殊标记
     tokenizer.post_processor = TemplateProcessing(
         single="<s> $A </s>",
         special_tokens=[("<s>", tokenizer.token_to_id("<s>")), ("</s>", tokenizer.token_to_id("</s>"))],
     )
 
-    # Convert to PreTrainedTokenizerFast
+    # 转换为PreTrainedTokenizerFast
     tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer)
     tokenizer.add_special_tokens({'pad_token': '<pad>', 'bos_token': '<s>', 'eos_token': '</s>'})
 
 
-    ## Preprocess the dataset
+    ## 预处理数据集
     def tokenize_function(example):
+        """将文本分词为动作序列"""
         tokenized = tokenizer.tokenize(example["text"], add_special_tokens=True)
         return {"actions": tokenized}
 
     def convert_function(examples):
+        """将处理后的序列转换为模型输入格式"""
         input_ids = tokenizer(examples["inputs"], is_split_into_words=True, add_special_tokens=False)["input_ids"]
         labels = tokenizer(examples["labels"], is_split_into_words=True, add_special_tokens=False)["input_ids"]
         labels = [[(idx if idx != tokenizer.pad_token_id else -100) for idx in sent] for sent in labels]
@@ -181,15 +426,16 @@ def main():
             "attention_mask": [[mask] for mask in examples["attention_mask"]],
         }
 
+    # 数据集处理流水线
     tokenized_dataset = dataset.map(tokenize_function, batched=False, remove_columns=["text"], load_from_cache_file=False)
     mapped_dataset = tokenized_dataset.map(mapping_function, batched=False, remove_columns=["actions"], load_from_cache_file=False)
     converted_dataset = mapped_dataset.map(convert_function, batched=True, remove_columns=["inputs"], load_from_cache_file=False)
 
 
-    # Load the model
-    # TODO: use GPT2 instead of GPTNeo when transformers 4.52.0 is released
-    # We use GPTNeo here since the implementation of GPT2 has a bug and the fix has not been released yet.
-    # GPTNeo is similar to GPT2 except that it uses local attention. We have disabled local attention in the config.
+    # 加载模型
+    # 注意：当transformers 4.52.0发布时，可以使用GPT2替代GPTNeo
+    # 我们使用GPTNeo是因为GPT2的实现有一个bug，修复尚未发布
+    # GPTNeo与GPT2类似，只是使用了局部注意力，我们在配置中禁用了局部注意力
     config = GPTNeoConfig(
         vocab_size=len(tokenizer),
         hidden_size=512,
@@ -202,7 +448,7 @@ def main():
     model = GPTNeoForCausalLM(config)
 
 
-    # Training
+    # 训练
     trainer = get_trainer(tokenizer, model, converted_dataset)
     trainer.train()
     metrics = trainer.evaluate(converted_dataset)
