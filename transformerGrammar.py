@@ -66,87 +66,61 @@ class TreeValidator:
         
         # 树结构检查
         TreeValidator._check_tree_structure(actions)
-    
-    @staticmethod
+      @staticmethod
     def _check_basic_requirements(actions: List[str]) -> None:
         """检查序列的基本要求"""
-        if not actions or len(actions) < 2:
-            raise InvalidTreeError("序列太短")
-            
-        if actions[0] != "<s>" or actions[-1] != "</s>":
-            raise InvalidTreeError("序列必须以<s>开始并以</s>结束")
-    
-    @staticmethod
+        if not actions or len(actions) < 2: raise InvalidTreeError("序列太短")
+        if actions[0] != "<s>" or actions[-1] != "</s>": raise InvalidTreeError("序列必须以<s>开始并以</s>结束")
+      @staticmethod
     def _check_bracket_balance(actions: List[str]) -> None:
         """检查括号是否平衡匹配"""
         balance = 0
         
         for idx, token in enumerate(actions):
-            if idx == 0 and token == "<s>":
-                continue
-            if idx == len(actions) - 1 and token == "</s>":
-                continue
+            if (idx == 0 and token == "<s>") or (idx == len(actions) - 1 and token == "</s>"): continue
                 
-            if token.startswith("("):
-                balance += 1
-            elif token.endswith(")"):
-                balance -= 1
+            balance += 1 if token.startswith("(") else (-1 if token.endswith(")") else 0)
                 
-            if balance < 0:
-                raise InvalidTreeError(f"在开括号前关闭非终结符: {token}，位置 {idx}")
+            if balance < 0: raise InvalidTreeError(f"在开括号前关闭非终结符: {token}，位置 {idx}")
                 
-        if balance != 0:
-            raise InvalidTreeError(f"序列末尾存在不匹配的非终结符。平衡值: {balance}")
-    
-    @staticmethod
+        if balance != 0: raise InvalidTreeError(f"序列末尾存在不匹配的非终结符。平衡值: {balance}")
+      @staticmethod
     def _check_tree_structure(actions: List[str]) -> None:
         """检查树结构的有效性，包括内容检查"""
-        stack = []
-        has_terminal = False
+        stack = []; has_terminal = False
         
         for idx, token in enumerate(actions):
-            if token in ["<s>", "</s>"]:
-                continue
+            if token in ["<s>", "</s>"]: continue
                 
             if token.startswith("("):
                 # [非终结符名称, 是否有内容]
                 stack.append([token[1:], False])
             elif token.endswith(")"):
-                if not stack:
-                    raise InvalidTreeError(f"关闭非终结符 '{token}' 没有匹配的开括号")
+                if not stack: raise InvalidTreeError(f"关闭非终结符 '{token}' 没有匹配的开括号")
                     
                 nt_name, has_content = stack.pop()
                 
-                if nt_name != token[:-1]:
-                    raise InvalidTreeError(f"非终结符不匹配: 预期 '{nt_name})', 得到 '{token}'")
-                    
-                if not has_content:
-                    raise InvalidTreeError(f"非终结符 '{nt_name}' 为空或只包含空非终结符")
+                if nt_name != token[:-1]: raise InvalidTreeError(f"非终结符不匹配: 预期 '{nt_name})', 得到 '{token}'")
+                if not has_content: raise InvalidTreeError(f"非终结符 '{nt_name}' 为空或只包含空非终结符")
                     
                 # 标记父级有内容
-                if stack:
-                    stack[-1][1] = True
+                if stack: stack[-1][1] = True
             else:  # 终端符号
                 has_terminal = True
-                if not stack:
-                    raise InvalidTreeError(f"在任何非终结符之外找到终端 '{token}'")
+                if not stack: raise InvalidTreeError(f"在任何非终结符之外找到终端 '{token}'")
                     
                 # 标记当前非终结符及其所有祖先有内容
-                stack[-1][1] = True
-                for i in range(len(stack) - 1):
-                    stack[i][1] = True
+                stack[-1][1] = True; [stack[i].__setitem__(1, True) for i in range(len(stack) - 1)]
         
         # 检查是否有终端符号
         if not has_terminal and len(actions) > 2:
             is_just_bos_eos = len(actions) == 2 and actions[0] == "<s>" and actions[1] == "</s>"
-            if not is_just_bos_eos:
-                raise InvalidTreeError("动作序列中没有找到终端符号")
+            if not is_just_bos_eos: raise InvalidTreeError("动作序列中没有找到终端符号")
 
 
 class SequenceProcessor:
     """序列处理器，负责处理输入、输出和位置ID"""
-    
-    @staticmethod
+      @staticmethod
     def process_sequence(actions: List[str]) -> Tuple[List[str], List[str], List[int]]:
         """
         处理动作序列，生成输入、输出和位置ID
@@ -159,48 +133,30 @@ class SequenceProcessor:
             labels: 处理后的输出序列
             position_ids: 位置ID序列
         """
-        inputs = []
-        labels = []
-        position_ids = []
-        depth = 0
+        inputs = []; labels = []; position_ids = []; depth = 0
         
         for token in actions:
             if token == "<s>":
-                inputs.append(token)
-                labels.append(token)
-                position_ids.append(0)
-                depth = 0
+                inputs.append(token); labels.append(token); position_ids.append(0); depth = 0
             elif token.startswith("("):
-                inputs.append(token)
-                labels.append(token)
-                position_ids.append(depth)
-                depth += 1
+                inputs.append(token); labels.append(token); position_ids.append(depth); depth += 1
             elif token.endswith(")"):
                 depth -= 1
                 # 原始闭括号
-                inputs.append(token)
-                labels.append(token)
-                position_ids.append(depth)
+                inputs.append(token); labels.append(token); position_ids.append(depth)
                 # 复制的闭括号
-                inputs.append(token)
-                labels.append("<pad>")
-                position_ids.append(depth)
+                inputs.append(token); labels.append("<pad>"); position_ids.append(depth)
             elif token == "</s>":
-                inputs.append(token)
-                labels.append(token)
-                position_ids.append(0)
+                inputs.append(token); labels.append(token); position_ids.append(0)
             else:  # 终端符号
-                inputs.append(token)
-                labels.append(token)
-                position_ids.append(depth)
+                inputs.append(token); labels.append(token); position_ids.append(depth)
                 
         return inputs, labels, position_ids
 
 
 class AttentionMaskGenerator:
     """注意力掩码生成器，负责生成STACK/COMPOSE注意力掩码"""
-    
-    @staticmethod
+      @staticmethod
     def get_token_types(inputs: List[str], labels: List[str]) -> List[TokenType]:
         """
         确定每个输入标记的类型
@@ -215,23 +171,16 @@ class AttentionMaskGenerator:
         token_types = []
         
         for token, label in zip(inputs, labels):
-            if token == "<s>":
-                token_types.append(TokenType.BOS)
-            elif token == "</s>":
-                token_types.append(TokenType.EOS)
-            elif token.startswith("("):
-                token_types.append(TokenType.ONT)
-            elif token.endswith(")"):
-                if label != "<pad>":
-                    token_types.append(TokenType.CNT1)
-                else:
-                    token_types.append(TokenType.CNT2)
-            else:
-                token_types.append(TokenType.TERM)
+            token_types.append(
+                TokenType.BOS if token == "<s>" else 
+                TokenType.EOS if token == "</s>" else 
+                TokenType.ONT if token.startswith("(") else 
+                (TokenType.CNT1 if label != "<pad>" else TokenType.CNT2) if token.endswith(")") else 
+                TokenType.TERM
+            )
                 
         return token_types
-    
-    @staticmethod
+      @staticmethod
     def generate_attention_mask(inputs: List[str], labels: List[str]) -> torch.Tensor:
         """
         生成注意力掩码
@@ -251,23 +200,18 @@ class AttentionMaskGenerator:
         for i in range(seq_len):
             current_type = token_types[i]
             
-            if current_type == TokenType.EOS:
-                continue
+            if current_type == TokenType.EOS: continue
                 
             if current_type == TokenType.CNT1:
                 # COMPOSE注意力模式
                 j = i
                 while j < seq_len and token_types[j] != TokenType.ONT:
-                    attention_mask[i, j] = 1.0
-                    j = stack.pop()
-                attention_mask[i, j] = 1.0
-                stack.append(i)
+                    attention_mask[i, j] = 1.0; j = stack.pop()
+                attention_mask[i, j] = 1.0; stack.append(i)
             else:
                 # STACK注意力模式
-                if current_type != TokenType.CNT2:
-                    stack.append(i)
-                for attended_idx in stack:
-                    attention_mask[i, attended_idx] = 1.0
+                if current_type != TokenType.CNT2: stack.append(i)
+                [attention_mask.__setitem__((i, attended_idx), 1.0) for attended_idx in stack]
                 attention_mask[i, i] = 1.0
                 
         return attention_mask
