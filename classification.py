@@ -70,19 +70,30 @@ def get_topic_classification_pipeline() -> Callable[[str], dict]:
     }
     
     # 使用预训练模型，选择一个针对Yahoo Answers Topics数据集微调过的模型
-    pipe = pipeline("text-classification", model="fabriceyhc/bert-base-uncased-yahoo_answers_topics", top_k=None)
-    
+    # 不设置top_k，这样会返回单个最高分数的结果
+    pipe = pipeline("text-classification", model="fabriceyhc/bert-base-uncased-yahoo_answers_topics")
+
     def func(text: str) -> dict:
         # 使用模型进行预测
         results = pipe(text)
-        
+
+        # 处理返回格式 - pipeline默认返回列表
+        if isinstance(results, list) and len(results) > 0:
+            result = results[0]  # 取第一个（最高分数的）结果
+        else:
+            result = results
+
+        # 确保result是字典类型
+        if not isinstance(result, dict):
+            raise ValueError(f"Expected dict result, got {type(result)}: {result}")
+
         # 获取预测的类别ID和分数
-        pred_id = int(results[0]["label"].split('_')[-1])  # 从LABEL_X中提取X
-        score = results[0]["score"]
-        
+        pred_id = int(result["label"].split('_')[-1])  # 从LABEL_X中提取X
+        score = result["score"]
+
         # 映射到目标标签
         label = label_map[pred_id]
-        
+
         return {"label": label, "score": score}
     
     return func
