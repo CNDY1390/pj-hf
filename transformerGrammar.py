@@ -272,17 +272,41 @@ class AttentionMaskGenerator:
                 
         return attention_mask
 
-
 def mapping_function(example: dict) -> dict:
     """
-    处理动作序列，生成用于Transformer Grammar模型的输入
+    Question:
+        Your task is to return the processed input, processed output, attention mask, and absolute positions of the action sequence for valid actions sequence. The following order may be your implementation order:
+
+            1. Check whether the given action sequence is a valid sequence to generate a legal parse tree. If it is invalid, please raise an InvalidTreeError Exception.
+            2. The processed input: a list of strings. It should duplicate all closing nonterminals in the given action sequence.
+            3. The processed output: a list of strings. It should insert '<pad>' after all closing nonterminals in the given action sequence.
+            4. The absolute positions: a list of integers. The absolute position of each token is defined as the depth of it in the tree.
+            5. The attention mask: a 2d torch tensor. This is the attention mask with STACK/COMPOSE attention. The attention mask of '</s>' is all 0s.
+
+        HINT: It is guaranteed that the first item of input is '<s>' (beginning of sequence), and the last item of input is '</s>' (end of sequence). The absolute positions of both '<s>' and '</s>' are 0 in this question.
     
     Args:
-        example: 包含动作序列的示例
-        
-    Returns:
-        处理后的示例，包含inputs、labels、position_ids和attention_mask
+        example (dict): The example to process. It has the following fields:
+            - actions (List[str]): The action sequence. It is a list of strings which can be regarded as an action sequence for generative transition-based parsing.
+
+    Return:
+        mapped (dict): The mapped example. It has the following fields:
+            - inputs (List[str]): The processed input. A list of tokens for the input.
+            - labels (List[str]): The processed output. A list of tokens for the expected output.
+            - position_ids (List[int]): The absolute positions. A list of integers representing the absolute position of each token in the input.
+            - attention_mask (torch.Tensor): The attention mask. Shape: (len(input), len(input)). A 2D tensor representing the attention mask for the input sequence. 1 for valid tokens, 0 for padding tokens.
+
+    Example:
+        >>> mapping_function({"actions": ["<s>", "(S", "(NP", "the", "blue", "bird", "NP)", "(VP", "sings", "VP)", "S)", "</s>"]})
+        {
+            'inputs': ['<s>', '(S', '(NP', 'the', 'blue', 'bird', 'NP)', 'NP)', '(VP', 'sings', 'VP)', 'VP)', 'S)', 'S)', '</s>'],
+            'labels': ['<s>', '(S', '(NP', 'the', 'blue', 'bird', 'NP)', '<pad>', '(VP', 'sings', 'VP)', '<pad>', 'S)', '<pad>', '</s>'],
+            'position_ids': [0, 0, 1, 2, 2, 2, 1, 1, 1, 2, 1, 1, 0, 0, 0],
+            'attention_mask': tensor([[...]])
+        }
     """
+
+    """YOUR CODE HERE"""
     actions = example["actions"]
     
     # 1. 验证动作序列
@@ -308,20 +332,30 @@ def get_trainer(
     train_dataset: Dataset
 ) -> Trainer:
     """
-    创建用于训练模型的Trainer对象
-    
+    Question:
+        Create a Trainer object for the model. The Trainer is used to train the model on the dataset.
+        Select the appropriate training arguments for the Trainer. For example, setting the proper learning rate,
+        batch size, optimizer, learning rate scheduler, number of epochs, etc. would be a good idea.
+
     Args:
-        tokenizer: 分词器
-        model: 预训练模型
-        train_dataset: 训练数据集
-        
+        tokenizer (PreTrainedTokenizerFast): The tokenizer to use for the model.
+        model (PreTrainedModel): The model to train.
+        train_dataset (Dataset): The dataset to train on.
+
     Returns:
-        trainer: Trainer对象
+        trainer (Trainer): The Trainer object for the model.
+
+    Example:
+        >>> trainer = get_trainer(tokenizer, model, train_dataset)
+        >>> trainer.train()
+        >>> trainer.evaluate(train_dataset)
+        {'eval_loss': 2.1234, ...}
     """
 
     def data_collator(features):
         """
-        数据整理器，将特征聚合成批次
+        Data collator is to aggregate the features into a batch. You'll find it helpful when creating the Trainer.
+        We simply pad the sequences but deal with attention mask seperately.
         """
         max_length = max([len(f["input_ids"]) for f in features])
         batch = {
@@ -353,7 +387,8 @@ def get_trainer(
         batch["attention_mask"] = torch.stack(batch["attention_mask"])
 
         return batch
-
+    
+    """YOUR CODE HERE"""
     # 训练参数配置
     training_args = TrainingArguments(
         output_dir="./results",
