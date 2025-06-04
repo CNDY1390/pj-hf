@@ -380,42 +380,40 @@ def get_trainer(
 
 
 def main():
-    """训练基于GPT2的Transformer Grammar模型，用于生成式转换解析"""
+    """This function trains a Transformer Grammar model based on GPT2 for the task of generative transition-based parsing."""
  
-    ## 从磁盘加载数据集
+    ## Load the dataset from disk
     dataset = load_dataset("text", data_files="data/corpus.cc", split="train")
 
 
-    ## 构建词级分词器
-    # 使用特殊标记初始化分词器
+    ## Build the word tokenizer
+    # Initialize tokenizer with special tokens
     tokenizer = Tokenizer(WordLevel(unk_token="<unk>"))
 
-    # 使用空格预分词器
+    # Use the whitespace pre-tokenizer to split on whitespace
     tokenizer.pre_tokenizer = WhitespaceSplit()
 
-    # 使用WordLevelTrainer构建词汇表
+    # Build the vocabulary using WordLevelTrainer
     trainer = WordLevelTrainer(special_tokens=["<unk>", "<s>", "</s>", "<pad>"])
     tokenizer.train_from_iterator(dataset["text"], trainer=trainer)
 
-    # 设置后处理器以添加特殊标记
+    # Set the post-processor to add special tokens
     tokenizer.post_processor = TemplateProcessing(
         single="<s> $A </s>",
         special_tokens=[("<s>", tokenizer.token_to_id("<s>")), ("</s>", tokenizer.token_to_id("</s>"))],
     )
 
-    # 转换为PreTrainedTokenizerFast
+    # Convert to PreTrainedTokenizerFast
     tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer)
     tokenizer.add_special_tokens({'pad_token': '<pad>', 'bos_token': '<s>', 'eos_token': '</s>'})
 
 
-    ## 预处理数据集
+    ## Preprocess the dataset
     def tokenize_function(example):
-        """将文本分词为动作序列"""
         tokenized = tokenizer.tokenize(example["text"], add_special_tokens=True)
         return {"actions": tokenized}
 
     def convert_function(examples):
-        """将处理后的序列转换为模型输入格式"""
         input_ids = tokenizer(examples["inputs"], is_split_into_words=True, add_special_tokens=False)["input_ids"]
         labels = tokenizer(examples["labels"], is_split_into_words=True, add_special_tokens=False)["input_ids"]
         labels = [[(idx if idx != tokenizer.pad_token_id else -100) for idx in sent] for sent in labels]
@@ -426,16 +424,15 @@ def main():
             "attention_mask": [[mask] for mask in examples["attention_mask"]],
         }
 
-    # 数据集处理流水线
     tokenized_dataset = dataset.map(tokenize_function, batched=False, remove_columns=["text"], load_from_cache_file=False)
     mapped_dataset = tokenized_dataset.map(mapping_function, batched=False, remove_columns=["actions"], load_from_cache_file=False)
     converted_dataset = mapped_dataset.map(convert_function, batched=True, remove_columns=["inputs"], load_from_cache_file=False)
 
 
-    # 加载模型
-    # 注意：当transformers 4.52.0发布时，可以使用GPT2替代GPTNeo
-    # 我们使用GPTNeo是因为GPT2的实现有一个bug，修复尚未发布
-    # GPTNeo与GPT2类似，只是使用了局部注意力，我们在配置中禁用了局部注意力
+    # Load the model
+    # TODO: use GPT2 instead of GPTNeo when transformers 4.52.0 is released
+    # We use GPTNeo here since the implementation of GPT2 has a bug and the fix has not been released yet.
+    # GPTNeo is similar to GPT2 except that it uses local attention. We have disabled local attention in the config.
     config = GPTNeoConfig(
         vocab_size=len(tokenizer),
         hidden_size=512,
@@ -448,7 +445,7 @@ def main():
     model = GPTNeoForCausalLM(config)
 
 
-    # 训练
+    # Training
     trainer = get_trainer(tokenizer, model, converted_dataset)
     trainer.train()
     metrics = trainer.evaluate(converted_dataset)
